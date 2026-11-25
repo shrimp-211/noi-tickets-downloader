@@ -1,0 +1,1002 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NOI 准考证批量下载</title>
+<style>
+  :root{
+    --brand:#c8102e; --brand-dark:#a30b24; --brand-soft:#fdeef0;
+    --ink:#172033; --muted:#667085; --line:#e5e8ef; --bg:#f5f6f9; --card:#ffffff;
+    --green:#0e9f6e; --green-soft:#e6f7f0;
+    --amber:#b45309; --amber-soft:#fff4e5;
+    --red:#d92d20; --red-soft:#fdecea;
+    --blue:#1d4ed8; --blue-soft:#eaf0ff;
+    --shadow:0 1px 2px rgba(16,24,40,.04), 0 10px 30px -18px rgba(16,24,40,.25);
+    --radius:16px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:radial-gradient(1100px 480px at 18% -12%, #ffffff 0%, var(--bg) 52%) fixed, var(--bg);
+    color:var(--ink);
+    font-family:"Segoe UI","Microsoft YaHei",system-ui,-apple-system,sans-serif;
+    font-size:14px; line-height:1.55; -webkit-font-smoothing:antialiased;
+  }
+  h1,h2,h3,p{margin:0}
+  a{color:var(--brand);text-decoration:none}
+  a:hover{text-decoration:underline}
+  .mono{font-family:Consolas,"SFMono-Regular",Menlo,monospace;font-size:12.5px}
+  .muted{color:var(--muted)}
+
+  /* 顶栏 */
+  .topbar{max-width:1320px;margin:0 auto;padding:24px 24px 8px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+  .brand{display:flex;align-items:center;gap:14px}
+  .logo{
+    width:52px;height:52px;border-radius:15px;display:grid;place-items:center;
+    background:linear-gradient(140deg,#e0142f 0%,#a30b24 100%);
+    color:#fff;font-weight:800;font-size:16px;letter-spacing:.5px;
+    box-shadow:0 10px 22px -10px rgba(200,16,46,.65);
+  }
+  h1{font-size:21px;font-weight:700;letter-spacing:.2px}
+  .brand p{color:var(--muted);font-size:12.5px;margin-top:1px}
+  .status-pill{
+    display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--line);
+    border-radius:999px;padding:7px 13px;font-size:12.5px;color:var(--muted);
+    box-shadow:0 1px 2px rgba(16,24,40,.03);
+  }
+  .status-pill .dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 0 3px var(--green-soft)}
+  .status-pill.offline .dot{background:var(--red);box-shadow:0 0 0 3px var(--red-soft)}
+
+  /* 布局 */
+  .layout{
+    max-width:1320px;margin:0 auto;padding:16px 24px 20px;
+    display:grid;grid-template-columns:minmax(0,1.12fr) minmax(0,1fr);
+    gap:20px;align-items:start;
+  }
+  .col{display:flex;flex-direction:column;gap:20px;min-width:0}
+  @media (max-width:1020px){
+    .layout{grid-template-columns:1fr}
+  }
+
+  /* 卡片 */
+  .card{
+    background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    box-shadow:var(--shadow);padding:20px;
+  }
+  .card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px}
+  .card-head h2{font-size:15.5px;font-weight:700;display:flex;align-items:center;gap:8px}
+  .hint{font-size:12.5px;color:var(--muted)}
+  .count{
+    display:inline-grid;place-items:center;min-width:22px;height:22px;padding:0 7px;
+    border-radius:999px;background:var(--brand-soft);color:var(--brand);font-size:12px;font-weight:700;
+  }
+  .head-actions{display:flex;align-items:center;gap:8px}
+
+  /* 表单 */
+  .field{margin-top:14px}
+  .field > label{display:block;font-size:12.5px;font-weight:600;color:var(--muted);margin-bottom:6px}
+  input:not([type=checkbox]):not([type=file]){
+    width:100%;height:40px;border:1px solid #dfe3ea;background:#fbfcfe;border-radius:10px;
+    padding:0 12px;font-size:13.5px;color:var(--ink);outline:none;transition:border-color .15s, box-shadow .15s, background .15s;
+    font-family:inherit;
+  }
+  input:not([type=checkbox]):not([type=file])::placeholder{color:#9aa4b2}
+  input:not([type=checkbox]):not([type=file]):focus{
+    border-color:var(--brand);background:#fff;box-shadow:0 0 0 3px rgba(200,16,46,.1);
+  }
+  .input-row{display:flex;gap:8px}
+  .input-row input{flex:1;min-width:0}
+  .help{font-size:12px;color:var(--muted);margin-top:6px}
+  .help code{
+    background:#f2f4f7;border-radius:4px;padding:1px 4px;
+    font-family:Consolas,"SFMono-Regular",Menlo,monospace;font-size:11.5px;color:#344054;
+  }
+  .segmented{display:flex;background:#f2f4f7;border-radius:10px;padding:3px;gap:3px}
+  .segmented button{
+    flex:1;height:32px;border:none;background:transparent;border-radius:8px;
+    font-family:inherit;font-size:12.8px;font-weight:600;color:var(--muted);
+    cursor:pointer;transition:background .15s, color .15s, box-shadow .15s;
+  }
+  .segmented button:hover{color:var(--ink)}
+  .segmented button.active{background:#fff;color:var(--brand);box-shadow:0 1px 3px rgba(16,24,40,.12)}
+  .field-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  @media (max-width:520px){.field-row{grid-template-columns:1fr}}
+
+  .btn{
+    height:40px;padding:0 15px;border-radius:10px;border:1px solid transparent;
+    font-size:13.5px;font-weight:600;font-family:inherit;cursor:pointer;
+    display:inline-flex;align-items:center;justify-content:center;gap:7px;
+    transition:transform .05s, background .15s, border-color .15s, color .15s, box-shadow .15s;
+    white-space:nowrap;
+  }
+  .btn:active{transform:translateY(1px)}
+  .btn:disabled{opacity:.55;cursor:not-allowed;transform:none}
+  .btn.primary{background:var(--brand);color:#fff;box-shadow:0 6px 14px -8px rgba(200,16,46,.75)}
+  .btn.primary:hover:not(:disabled){background:var(--brand-dark)}
+  .btn.ghost{background:#fff;border-color:#dfe3ea;color:var(--ink)}
+  .btn.ghost:hover:not(:disabled){border-color:#c8cfdb;background:#fafbfd}
+  .btn.big{width:100%;height:48px;font-size:15px;border-radius:12px;margin-top:10px}
+
+  .text-btn{
+    background:none;border:none;padding:2px 4px;color:var(--brand);font-size:12.8px;
+    font-weight:600;cursor:pointer;font-family:inherit;border-radius:6px;
+  }
+  .text-btn:hover{background:var(--brand-soft)}
+  .text-btn.danger{color:var(--red)}
+  .text-btn.danger:hover{background:var(--red-soft)}
+
+  /* 开关 */
+  .switches{margin-top:14px;border-top:1px dashed var(--line);padding-top:6px;display:flex;flex-direction:column}
+  .switch{display:flex;align-items:center;gap:11px;padding:9px 0;cursor:pointer;user-select:none}
+  .switch input{display:none}
+  .switch .track{
+    flex:0 0 auto;width:40px;height:22px;border-radius:99px;background:#d7dbe4;position:relative;transition:background .18s;
+  }
+  .switch .track::after{
+    content:"";position:absolute;left:3px;top:3px;width:16px;height:16px;border-radius:50%;
+    background:#fff;transition:transform .18s;box-shadow:0 1px 3px rgba(16,24,40,.25);
+  }
+  .switch input:checked + .track{background:var(--brand)}
+  .switch input:checked + .track::after{transform:translateX(18px)}
+  .switch strong{display:block;font-size:13.5px;font-weight:600}
+  .switch small{display:block;color:var(--muted);font-size:12px;margin-top:1px}
+
+  /* 账号表单与表格 */
+  .add-form{display:grid;grid-template-columns:1.2fr 1fr .9fr auto;gap:8px;margin-top:14px}
+  @media (max-width:700px){.add-form{grid-template-columns:1fr 1fr}.add-form .btn{grid-column:span 2}}
+  .account-table-wrap{
+    margin-top:14px;border:1px solid var(--line);border-radius:12px;overflow:auto;max-height:288px;
+    position:relative;
+  }
+  .account-table{width:100%;border-collapse:collapse}
+  .account-table th{
+    position:sticky;top:0;z-index:1;background:#f8f9fc;text-align:left;
+    font-size:12px;font-weight:600;color:var(--muted);padding:9px 12px;border-bottom:1px solid var(--line);
+  }
+  .account-table td{padding:9px 12px;border-top:1px solid #eef0f5;font-size:13px;vertical-align:middle}
+  .account-table tbody tr:first-child td{border-top:none}
+  .account-table tbody tr:hover{background:#fafbfd}
+  .account-table .num{width:38px;color:#98a2b3;font-size:12px}
+  .account-table .right{text-align:right;width:52px}
+  .icon-btn{
+    width:28px;height:28px;border-radius:8px;border:1px solid transparent;background:none;
+    color:#98a2b3;font-size:17px;line-height:1;cursor:pointer;transition:.15s;font-family:inherit;
+  }
+  .icon-btn:hover{background:var(--red-soft);color:var(--red);border-color:#f6c9c4}
+  .empty{
+    padding:26px 16px;text-align:center;color:var(--muted);font-size:13px;
+  }
+  .empty.small{padding:16px}
+
+  /* 上传 */
+  .upload-zone{
+    margin-top:14px;border:1.5px dashed #d3d9e4;border-radius:12px;background:#fbfcfe;
+    padding:15px 16px;display:flex;align-items:center;gap:14px;cursor:pointer;transition:.15s;
+  }
+  .upload-zone:hover,.upload-zone.dragover{border-color:var(--brand);background:var(--brand-soft)}
+  .upload-zone.busy{opacity:.6;pointer-events:none}
+  .upload-icon{
+    flex:0 0 auto;width:42px;height:42px;border-radius:11px;background:#fff;border:1px solid var(--line);
+    display:grid;place-items:center;color:var(--brand);
+  }
+  .upload-zone strong{display:block;font-size:13.5px}
+  .upload-zone p{font-size:12px;color:var(--muted);margin-top:2px}
+  .upload-zone a{margin-left:auto;flex:0 0 auto}
+  .upload-report{margin-top:10px;font-size:12.5px;color:var(--muted)}
+  .upload-report ul{margin:6px 0 0;padding-left:18px}
+  .upload-report li{margin:2px 0}
+
+  /* 执行 */
+  .run-card .hint{color:var(--brand);font-weight:600}
+  .progress-wrap{margin-top:16px}
+  .progress-meta{display:flex;justify-content:space-between;font-size:12.5px;color:var(--muted);margin-bottom:7px}
+  .progress-meta b{color:var(--ink)}
+  .progress{height:9px;border-radius:99px;background:#eef0f5;overflow:hidden}
+  .progress .bar{
+    height:100%;width:0;border-radius:99px;
+    background:linear-gradient(90deg,#e0142f,#a30b24);
+    transition:width .45s ease;
+  }
+  .current{font-size:12.5px;color:var(--muted);margin-top:9px;min-height:19px;display:flex;align-items:center;gap:7px}
+  .spinner{
+    width:12px;height:12px;border-radius:50%;border:2px solid #f3c3cb;border-top-color:var(--brand);
+    animation:spin .8s linear infinite;flex:0 0 auto;
+  }
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* 结果 */
+  .completion{
+    display:flex;align-items:flex-start;gap:11px;border-radius:12px;padding:12px 14px;
+    margin:4px 0 12px;border:1px solid transparent;
+  }
+  .completion.success{background:var(--green-soft);border-color:#bfe9d6;color:#065f46}
+  .completion.warning{background:var(--amber-soft);border-color:#f5d9a8;color:#7c2d12}
+  .completion.danger{background:var(--red-soft);border-color:#f6c9c4;color:#912018}
+  .completion .c-icon{flex:0 0 auto;margin-top:1px;display:inline-flex}
+  .completion strong{display:block;font-size:13.5px}
+  .completion p{font-size:12.5px;margin-top:2px;opacity:.92;line-height:1.55}
+  .summary{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 14px}
+  .chip{
+    display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border-radius:999px;
+    font-size:12px;font-weight:600;background:#f2f4f7;color:#475467;
+  }
+  .chip.total{background:var(--blue-soft);color:var(--blue)}
+  .chip.success{background:var(--green-soft);color:var(--green)}
+  .chip.partial{background:var(--amber-soft);color:var(--amber)}
+  .chip.failed{background:var(--red-soft);color:var(--red)}
+  .results{display:flex;flex-direction:column;gap:10px}
+  .result-item{
+    border:1px solid var(--line);border-radius:12px;padding:12px 13px;background:#fff;
+    transition:.15s;
+  }
+  .result-item:hover{border-color:#d6dbe5}
+  .result-top{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+  .badge{font-size:11.5px;font-weight:700;padding:3px 9px;border-radius:999px;flex:0 0 auto}
+  .badge.success{background:var(--green-soft);color:var(--green)}
+  .badge.partial{background:var(--amber-soft);color:var(--amber)}
+  .badge.failed{background:var(--red-soft);color:var(--red)}
+  .badge.info{background:var(--blue-soft);color:var(--blue)}
+  .badge.neutral{background:#f2f4f7;color:#475467}
+  .result-name{font-weight:600;font-size:13.5px}
+  .result-account{color:var(--muted);font-size:12.5px}
+  .result-msg{font-size:12.5px;color:var(--red);margin-top:7px;white-space:pre-line}
+  .files{margin-top:9px;display:flex;flex-direction:column;gap:5px}
+  .file{display:flex;align-items:center;gap:7px;font-size:12.8px;color:#344054;min-width:0}
+  .file-ico{color:var(--brand);display:inline-flex;flex:0 0 auto}
+  .file-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .file-act{margin-left:auto;color:#98a2b3;font-size:11.5px;flex:0 0 auto;padding-left:8px}
+  .skip-details{margin-top:9px;font-size:12.5px}
+  .skip-details summary{cursor:pointer;color:var(--muted);font-weight:600;width:fit-content}
+  .skip-details ul{margin:6px 0 0;padding-left:18px;color:var(--muted)}
+  .skip-details li{margin:3px 0;display:flex;gap:8px;flex-wrap:wrap}
+  .skip-details li span{color:#344054}
+  .skip-details li em{font-style:normal;color:#98a2b3}
+  .mini-loading{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted);margin-top:8px}
+  .mini-loading span{width:5px;height:5px;border-radius:50%;background:var(--brand);animation:bounce 1s infinite}
+  .mini-loading span:nth-child(2){animation-delay:.15s}
+  .mini-loading span:nth-child(3){animation-delay:.3s;margin-right:3px}
+  @keyframes bounce{0%,80%,100%{opacity:.25;transform:translateY(0)}40%{opacity:1;transform:translateY(-3px)}}
+
+  /* 日志 */
+  .log-box{margin-top:14px;border-top:1px dashed var(--line);padding-top:10px}
+  .log-box summary{cursor:pointer;font-size:12.5px;color:var(--muted);font-weight:600;width:fit-content}
+  .log{
+    margin-top:8px;max-height:210px;overflow:auto;background:#0f172a;border-radius:10px;padding:10px 12px;
+    font-family:Consolas,"SFMono-Regular",Menlo,monospace;font-size:12px;line-height:1.7;color:#cbd5e1;
+  }
+  .log-line{display:flex;gap:9px;word-break:break-word}
+  .log-line .t{color:#64748b;flex:0 0 auto}
+  .log-line.warn{color:#fbbf24}
+  .log-line.error{color:#fda4af}
+
+  /* 提示 */
+  .toast-wrap{position:fixed;right:20px;bottom:20px;display:flex;flex-direction:column;gap:10px;z-index:99;max-width:380px}
+  .toast{
+    background:#111827;color:#fff;border-radius:11px;padding:11px 14px;font-size:13px;
+    box-shadow:0 12px 30px -12px rgba(0,0,0,.5);animation:slide-in .22s ease both;
+    word-break:break-word;
+  }
+  .toast.success{background:#067647}
+  .toast.error{background:#b42318}
+  .toast.info{background:#1d2939}
+  .toast.out{animation:slide-out .22s ease both}
+  @keyframes slide-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes slide-out{to{opacity:0;transform:translateY(6px)}}
+
+  .foot{max-width:1320px;margin:0 auto;padding:0 24px 40px;color:#98a2b3;font-size:12px;text-align:center}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="logo">NOI</div>
+    <div>
+      <h1>准考证批量下载</h1>
+      <p>登录活动列表 · 逐账号下载准考证 PDF</p>
+    </div>
+  </div>
+  <div class="status-pill" id="serviceStatus"><span class="dot"></span><span>本地服务运行中</span></div>
+</header>
+
+<main class="layout">
+  <section class="col">
+    <!-- 下载设置 -->
+    <div class="card">
+      <div class="card-head">
+        <h2>下载设置</h2>
+        <span class="hint">配置本次任务</span>
+      </div>
+
+      <div class="field">
+        <label for="baseUrl">站点地址</label>
+        <input id="baseUrl" type="text" placeholder="https://cspsjtest.noi.cn" spellcheck="false">
+      </div>
+
+      <div class="field">
+        <label for="outDir">下载目录</label>
+        <div class="input-row">
+          <input id="outDir" type="text" placeholder="例如 D:\准考证 或 ./tickets" spellcheck="false">
+          <button class="btn ghost" id="pickDirBtn" type="button">浏览…</button>
+          <button class="btn ghost" id="openDirBtn" type="button">打开</button>
+        </div>
+        <p class="help">准考证 PDF 的保存位置，按下方目录结构归档。</p>
+      </div>
+
+      <div class="field">
+        <label>目录结构</label>
+        <div class="segmented" id="layoutGroup" role="group" aria-label="目录结构">
+          <button type="button" data-layout="activity" class="active">按活动区分</button>
+          <button type="button" data-layout="user">按用户区分</button>
+          <button type="button" data-layout="none">不区分</button>
+        </div>
+        <p class="help" id="layoutHint">每个活动一个文件夹，准考证按活动归档（默认）</p>
+      </div>
+
+      <div class="field">
+        <label for="filenameTemplate">文件名格式</label>
+        <input id="filenameTemplate" type="text" value="{original}" spellcheck="false">
+        <p class="help">
+          默认 <code>{original}</code> 保持服务端原始文件名；可用占位符：
+          <code>{activity}</code> 活动、<code>{user}</code> 用户、<code>{account}</code> 脱敏账号、
+          <code>{note}</code> 备注、<code>{id}</code> 活动 ID、<code>{date}</code> 日期。
+        </p>
+      </div>
+
+      <div class="field-row">
+        <div class="field">
+          <label for="loginTimeout">登录等待（秒）</label>
+          <input id="loginTimeout" type="number" min="10" max="300" value="60">
+        </div>
+        <div class="field">
+          <label for="delay">账号间隔（秒）</label>
+          <input id="delay" type="number" min="0" max="10" step="0.5" value="1">
+        </div>
+      </div>
+
+      <div class="switches">
+        <label class="switch">
+          <input type="checkbox" id="headed">
+          <span class="track"></span>
+          <div><strong>显示浏览器窗口</strong><small>遇到验证码或风控时可手动完成</small></div>
+        </label>
+        <label class="switch">
+          <input type="checkbox" id="history">
+          <span class="track"></span>
+          <div><strong>包含历史活动</strong><small>往期活动通常已关闭准考证下载</small></div>
+        </label>
+      </div>
+    </div>
+
+    <!-- 账号 -->
+    <div class="card">
+      <div class="card-head">
+        <h2>账号列表 <span class="count" id="accountCount">0</span></h2>
+        <button class="text-btn danger" id="clearAccountsBtn" type="button">清空</button>
+      </div>
+
+      <form class="add-form" id="addForm">
+        <input id="newUser" type="text" placeholder="账号（手机号/邮箱）" autocomplete="off" aria-label="账号">
+        <input id="newPass" type="password" placeholder="密码" autocomplete="new-password" aria-label="密码">
+        <input id="newNote" type="text" placeholder="备注（可选）" autocomplete="off" aria-label="备注">
+        <button class="btn primary" type="submit">添加</button>
+      </form>
+
+      <div class="account-table-wrap">
+        <table class="account-table">
+          <thead><tr><th>#</th><th>账号（脱敏）</th><th>备注</th><th></th></tr></thead>
+          <tbody id="accountBody"></tbody>
+        </table>
+        <div class="empty" id="accountEmpty">还没有账号，可在上方手动添加或上传表格</div>
+      </div>
+
+      <div class="upload-zone" id="uploadZone">
+        <div class="upload-icon">
+          <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 16V4m0 0L7 9m5-5 5 5"/><path d="M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/>
+          </svg>
+        </div>
+        <div>
+          <strong>点击或拖拽上传表格</strong>
+          <p>支持 .csv / .xlsx，表头：账号、密码、备注</p>
+        </div>
+        <a href="/api/template.csv" id="downloadTemplate">下载模板</a>
+        <input type="file" id="fileInput" accept=".csv,.txt,.xlsx,.xlsm" hidden>
+      </div>
+      <div class="upload-report" id="uploadReport" hidden></div>
+    </div>
+  </section>
+
+  <section class="col">
+    <!-- 执行 -->
+    <div class="card run-card">
+      <div class="card-head">
+        <h2>执行</h2>
+        <span class="hint" id="runHint">准备就绪</span>
+      </div>
+      <button class="btn primary big" id="startBtn" type="button">开始下载</button>
+      <div class="progress-wrap" id="progressWrap" hidden>
+        <div class="progress-meta">
+          <span><b id="progressText">0 / 0</b></span>
+          <span id="progressPercent">0%</span>
+        </div>
+        <div class="progress"><div class="bar" id="progressBar"></div></div>
+        <p class="current" id="currentAccount"></p>
+      </div>
+    </div>
+
+    <!-- 结果 -->
+    <div class="card">
+      <div class="card-head">
+        <h2>结果</h2>
+        <div class="head-actions">
+          <button class="text-btn" id="openResultDir" type="button">打开下载目录</button>
+        </div>
+      </div>
+      <div class="completion" id="completion" hidden></div>
+      <div class="summary" id="summary" hidden></div>
+      <div class="results" id="results">
+        <div class="empty">任务开始后，这里会显示每个账号的下载情况</div>
+      </div>
+
+      <details class="log-box" id="logBox">
+        <summary>运行日志</summary>
+        <div class="log" id="log"><div class="log-line">暂无日志</div></div>
+      </details>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">账号密码仅保存在本机内存中，服务关闭即清除 · 下载的准考证含个人信息，请注意保管</footer>
+
+<div class="toast-wrap" id="toastWrap"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+const state = { accounts: [], job: null, pollTimer: null, layout: "activity" };
+const POLL_INTERVAL = 900;
+
+const LAYOUT_HINTS = {
+  activity: "每个活动一个文件夹，准考证按活动归档（默认）",
+  user: "每个账号一个文件夹，准考证集中存放",
+  none: "全部直接放在下载目录中，建议在文件名格式中加入 {user} 或 {account} 区分"
+};
+
+const STATUS_META = {
+  running: ["进行中", "info"],
+  success: ["成功", "success"],
+  partial: ["部分成功", "partial"],
+  skipped: ["无可下载", "neutral"],
+  failed:  ["失败", "failed"],
+  empty:   ["无活动", "neutral"]
+};
+
+const FILE_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>';
+const CHECK_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg>';
+const WARN_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2.8 19a1.6 1.6 0 0 0 1.4 2.4h15.6a1.6 1.6 0 0 0 1.4-2.4z"/><path d="M12 9v5"/><path d="M12 17.5h.01"/></svg>';
+const X_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6m0-6-6 6"/></svg>';
+
+function esc(value){
+  return String(value ?? "").replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
+}
+
+async function api(url, options){
+  const response = await fetch(url, options || {});
+  let data = {};
+  try { data = await response.json(); } catch (err) {}
+  if (!response.ok || data.ok === false){
+    throw new Error(data.message || ("请求失败（HTTP " + response.status + "）"));
+  }
+  return data;
+}
+
+function toast(message, type, timeout){
+  type = type || "info";
+  timeout = timeout || 3600;
+  const el = document.createElement("div");
+  el.className = "toast " + type;
+  el.textContent = message;
+  $("toastWrap").appendChild(el);
+  setTimeout(() => {
+    el.classList.add("out");
+    setTimeout(() => el.remove(), 240);
+  }, timeout);
+}
+
+/* ---------------- 设置持久化 ---------------- */
+
+function restoreSettings(){
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem("noi-settings") || "{}"); } catch (err) {}
+  if (saved.baseUrl) $("baseUrl").value = saved.baseUrl;
+  if (saved.outDir) $("outDir").value = saved.outDir;
+  if (saved.loginTimeout) $("loginTimeout").value = saved.loginTimeout;
+  if (saved.delay !== undefined) $("delay").value = saved.delay;
+  $("headed").checked = !!saved.headed;
+  $("history").checked = !!saved.history;
+  $("filenameTemplate").value = saved.filenameTemplate || "{original}";
+  setLayout(saved.layout || "activity", false);
+  if (!$("baseUrl").value) $("baseUrl").value = "https://cspsjtest.noi.cn";
+  if (!$("outDir").value) $("outDir").value = "tickets";
+}
+
+function setLayout(value, persist){
+  if (!LAYOUT_HINTS[value]) value = "activity";
+  state.layout = value;
+  document.querySelectorAll("#layoutGroup button").forEach(button => {
+    button.classList.toggle("active", button.dataset.layout === value);
+  });
+  $("layoutHint").textContent = LAYOUT_HINTS[value];
+  if (persist) persistSettings();
+}
+
+function persistSettings(){
+  try {
+    localStorage.setItem("noi-settings", JSON.stringify({
+      baseUrl: $("baseUrl").value.trim(),
+      outDir: $("outDir").value.trim(),
+      layout: state.layout,
+      filenameTemplate: $("filenameTemplate").value.trim(),
+      loginTimeout: $("loginTimeout").value,
+      delay: $("delay").value,
+      headed: $("headed").checked,
+      history: $("history").checked
+    }));
+  } catch (err) {}
+}
+
+/* ---------------- 账号 ---------------- */
+
+async function loadAccounts(){
+  const data = await api("/api/accounts");
+  state.accounts = data.accounts || [];
+  renderAccounts();
+}
+
+function renderAccounts(){
+  const body = $("accountBody");
+  body.innerHTML = state.accounts.map((account, index) =>
+    '<tr>' +
+      '<td class="num">' + (index + 1) + '</td>' +
+      '<td class="mono">' + esc(account.display) + '</td>' +
+      '<td>' + (account.note ? esc(account.note) : '<span class="muted">—</span>') + '</td>' +
+      '<td class="right"><button class="icon-btn" data-id="' + account.id + '" title="删除" aria-label="删除账号">×</button></td>' +
+    '</tr>'
+  ).join("");
+
+  $("accountCount").textContent = state.accounts.length;
+  $("accountEmpty").hidden = state.accounts.length > 0;
+  updateStartLabel();
+}
+
+function updateStartLabel(){
+  const btn = $("startBtn");
+  if (state.job && state.job.running){
+    btn.disabled = true;
+    btn.textContent = "下载中…";
+    return;
+  }
+  btn.disabled = false;
+  btn.textContent = state.accounts.length
+    ? "开始下载（" + state.accounts.length + " 个账号）"
+    : "开始下载";
+}
+
+async function addAccount(event){
+  event.preventDefault();
+  const username = $("newUser").value.trim();
+  const password = $("newPass").value;
+  const note = $("newNote").value.trim();
+  if (!username){ toast("请输入账号", "error"); return; }
+  if (!password){ toast("请输入密码", "error"); return; }
+  try {
+    await api("/api/accounts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password, note })
+    });
+    $("newUser").value = "";
+    $("newPass").value = "";
+    $("newNote").value = "";
+    await loadAccounts();
+    toast("账号已添加", "success", 2200);
+    $("newUser").focus();
+  } catch (err){
+    toast(err.message, "error", 4500);
+  }
+}
+
+async function deleteAccount(id){
+  try {
+    await api("/api/accounts/" + id, { method: "DELETE" });
+    await loadAccounts();
+    toast("已删除", "success", 1800);
+  } catch (err){
+    toast(err.message, "error");
+  }
+}
+
+async function clearAccounts(){
+  if (!state.accounts.length) return;
+  if (!confirm("确定清空所有账号吗？此操作不可撤销。")) return;
+  try {
+    await api("/api/accounts/clear", { method: "POST" });
+    await loadAccounts();
+    $("uploadReport").hidden = true;
+    toast("账号列表已清空", "success");
+  } catch (err){
+    toast(err.message, "error");
+  }
+}
+
+/* ---------------- 表格上传 ---------------- */
+
+function bindUpload(){
+  const zone = $("uploadZone");
+  const input = $("fileInput");
+
+  zone.addEventListener("click", event => {
+    if (event.target.closest("#downloadTemplate")) return;
+    input.click();
+  });
+  zone.addEventListener("dragover", event => {
+    event.preventDefault();
+    zone.classList.add("dragover");
+  });
+  zone.addEventListener("dragleave", () => zone.classList.remove("dragover"));
+  zone.addEventListener("drop", event => {
+    event.preventDefault();
+    zone.classList.remove("dragover");
+    const file = event.dataTransfer.files && event.dataTransfer.files[0];
+    if (file) uploadFile(file);
+  });
+  input.addEventListener("change", () => {
+    if (input.files && input.files[0]) uploadFile(input.files[0]);
+    input.value = "";
+  });
+}
+
+async function uploadFile(file){
+  const zone = $("uploadZone");
+  const form = new FormData();
+  form.append("file", file);
+  zone.classList.add("busy");
+  try {
+    const data = await api("/api/accounts/upload", { method: "POST", body: form });
+    await loadAccounts();
+    toast(data.message || "上传完成", "success", 3600);
+    renderUploadReport(data);
+  } catch (err){
+    toast(err.message, "error", 5000);
+  } finally {
+    zone.classList.remove("busy");
+  }
+}
+
+function renderUploadReport(data){
+  const container = $("uploadReport");
+  const items = []
+    .concat((data.skipped || []).map(item => "第 " + item.row + " 行 " + (item.username || "（空账号）") + "：" + item.reason))
+    .concat((data.duplicates || []).map(item => item.username + "：" + item.reason));
+
+  if (!items.length){
+    container.hidden = true;
+    container.innerHTML = "";
+    return;
+  }
+  container.hidden = false;
+  container.innerHTML = "部分行未导入：<ul>" +
+    items.slice(0, 20).map(text => "<li>" + esc(text) + "</li>").join("") +
+    "</ul>" + (items.length > 20 ? '<div>…… 另有 ' + (items.length - 20) + ' 条</div>' : "");
+}
+
+/* ---------------- 任务 ---------------- */
+
+async function startJob(){
+  persistSettings();
+  if (!state.accounts.length){
+    toast("请先添加账号", "error");
+    return;
+  }
+  const btn = $("startBtn");
+  btn.disabled = true;
+  btn.textContent = "正在启动…";
+  try {
+    await api("/api/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        base_url: $("baseUrl").value.trim(),
+        out_dir: $("outDir").value.trim(),
+        layout: state.layout,
+        filename_template: $("filenameTemplate").value.trim(),
+        headed: $("headed").checked,
+        history: $("history").checked,
+        login_timeout: Number($("loginTimeout").value) || 60,
+        delay: Number($("delay").value) || 0
+      })
+    });
+    toast("任务已开始", "success", 2200);
+    schedulePoll(300);
+  } catch (err){
+    toast(err.message, "error", 5000);
+    updateStartLabel();
+  }
+}
+
+function schedulePoll(delay){
+  clearTimeout(state.pollTimer);
+  state.pollTimer = setTimeout(pollJob, delay || POLL_INTERVAL);
+}
+
+async function pollJob(){
+  try {
+    const data = await api("/api/job");
+    state.job = data.job;
+    $("serviceStatus").classList.remove("offline");
+    $("serviceStatus").querySelector("span:last-child").textContent = "本地服务运行中";
+    renderJob();
+    if (data.job.running) schedulePoll(POLL_INTERVAL);
+    else updateStartLabel();
+  } catch (err){
+    $("serviceStatus").classList.add("offline");
+    schedulePoll(1800);
+  }
+}
+
+function formatDuration(seconds){
+  if (!isFinite(seconds) || seconds < 0) return "";
+  if (seconds < 60) return Math.round(seconds) + " 秒";
+  const minutes = Math.floor(seconds / 60);
+  return minutes + " 分 " + Math.round(seconds % 60) + " 秒";
+}
+
+function renderJob(){
+  const job = state.job;
+  if (!job){
+    updateStartLabel();
+    return;
+  }
+
+  const started = !!(job.running || job.started_at);
+  $("progressWrap").hidden = !started;
+
+  if (started){
+    const total = job.total || 0;
+    const done = job.done || 0;
+    const percent = total ? Math.min(100, Math.round(done / total * 100)) : 0;
+    $("progressText").textContent = done + " / " + total;
+    $("progressPercent").textContent = percent + "%";
+    $("progressBar").style.width = percent + "%";
+
+    const current = $("currentAccount");
+    if (job.running){
+      current.innerHTML = '<span class="spinner"></span><span>' +
+        esc(job.current ? "正在处理：" + job.current : "正在准备…") + '</span>';
+    } else if (job.finished_at && job.started_at){
+      current.textContent = "已完成 · 用时 " + formatDuration(job.finished_at - job.started_at);
+    } else {
+      current.textContent = "";
+    }
+  }
+
+  renderResults(job);
+  renderLog(job);
+  updateStartLabel();
+
+  if (job.running){
+    $("runHint").textContent = "运行中";
+  } else if (job.finished_at){
+    $("runHint").textContent = "已完成";
+  } else {
+    $("runHint").textContent = "准备就绪";
+  }
+}
+
+function renderResults(job){
+  const container = $("results");
+  const summary = $("summary");
+  const completion = $("completion");
+  const results = job.results || [];
+
+  if (!results.length){
+    container.innerHTML = '<div class="empty">任务开始后，这里会显示每个账号的下载情况</div>';
+    summary.hidden = true;
+    completion.hidden = true;
+    return;
+  }
+
+  const counts = {};
+  let fileCount = 0;
+  results.forEach(result => {
+    counts[result.status] = (counts[result.status] || 0) + 1;
+    fileCount += (result.files || []).length;
+  });
+
+  const labels = [
+    ["success", "成功"], ["partial", "部分成功"], ["failed", "失败"],
+    ["skipped", "无可下载"], ["empty", "无活动"]
+  ];
+  const chips = labels
+    .filter(item => counts[item[0]])
+    .map(item => '<span class="chip ' + item[0] + '">' + item[1] + " " + counts[item[0]] + "</span>")
+    .join("");
+
+  summary.hidden = false;
+  summary.innerHTML = '<span class="chip total">共下载 ' + fileCount + ' 份</span>' + chips;
+
+  renderCompletion(job, counts, fileCount, results);
+  container.innerHTML = results.map(renderResult).join("");
+}
+
+function renderCompletion(job, counts, fileCount, results){
+  const el = $("completion");
+  if (job.running || !job.finished_at){
+    el.hidden = true;
+    return;
+  }
+
+  const total = job.total || results.length;
+  const failed = counts.failed || 0;
+  const skippedActivities = results.reduce((sum, result) => sum + (result.skipped || []).length, 0);
+  const duration = job.started_at ? formatDuration(job.finished_at - job.started_at) : "";
+
+  let tone = "success";
+  let title = "任务完成";
+  if (failed > 0){
+    tone = fileCount > 0 ? "warning" : "danger";
+    title = "任务结束，存在失败账号";
+  } else if (fileCount === 0){
+    tone = "warning";
+    title = "任务结束，未下载到文件";
+  }
+
+  const parts = ["共 " + total + " 个账号"];
+  [["success", "成功"], ["partial", "部分成功"], ["skipped", "无可下载"],
+   ["empty", "无活动"], ["failed", "失败"]].forEach(item => {
+    if (counts[item[0]]) parts.push(item[1] + " " + counts[item[0]]);
+  });
+
+  let detail = parts.join("，") + "；下载 " + fileCount + " 份";
+  if (skippedActivities > 0) detail += "，" + skippedActivities + " 个活动未下载";
+  if (duration) detail += "，用时 " + duration;
+  detail += "。";
+
+  const icon = tone === "success" ? CHECK_SVG : (tone === "danger" ? X_SVG : WARN_SVG);
+  el.className = "completion " + tone;
+  el.innerHTML = '<span class="c-icon">' + icon + '</span>' +
+    '<div><strong>' + esc(title) + '</strong><p>' + esc(detail) + '</p></div>';
+  el.hidden = false;
+}
+
+function renderResult(result){
+  const meta = STATUS_META[result.status] || ["未知", "neutral"];
+  const files = (result.files || []).map(file =>
+    '<div class="file">' +
+      '<span class="file-ico">' + FILE_SVG + '</span>' +
+      '<span class="file-name" title="' + esc(file.path) + '">' + esc(file.name) + '</span>' +
+      (file.activity ? '<span class="file-act">' + esc(file.activity) + '</span>' : '') +
+    '</div>'
+  ).join("");
+
+  const skipped = (result.skipped || []).map(item =>
+    "<li><span>" + esc(item.activity) + "</span><em>" + esc(item.reason) + "</em></li>"
+  ).join("");
+
+  return '<div class="result-item">' +
+    '<div class="result-top">' +
+      '<span class="badge ' + meta[1] + '">' + meta[0] + '</span>' +
+      '<span class="result-name">' + esc(result.note || result.account) + '</span>' +
+      (result.note ? '<span class="result-account mono">' + esc(result.account) + '</span>' : '') +
+    '</div>' +
+    (result.message ? '<p class="result-msg">' + esc(result.message) + '</p>' : '') +
+    (result.status === "running" ? '<div class="mini-loading"><span></span><span></span><span></span>处理中…</div>' : '') +
+    (files ? '<div class="files">' + files + '</div>' : '') +
+    (skipped ? '<details class="skip-details"><summary>' + result.skipped.length + ' 个活动未下载</summary><ul>' + skipped + '</ul></details>' : '') +
+  '</div>';
+}
+
+function renderLog(job){
+  const el = $("log");
+  const lines = (job.log || []).slice(-150);
+  if (!lines.length){
+    el.innerHTML = '<div class="log-line">暂无日志</div>';
+    return;
+  }
+  const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+  el.innerHTML = lines.map(line =>
+    '<div class="log-line ' + esc(line.level) + '">' +
+      '<span class="t">' + esc(line.time) + '</span>' +
+      '<span>' + esc(line.text) + '</span>' +
+    '</div>'
+  ).join("");
+  if (nearBottom) el.scrollTop = el.scrollHeight;
+}
+
+/* ---------------- 目录 ---------------- */
+
+async function openDirectory(path){
+  try {
+    await api("/api/open_dir", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: path || $("outDir").value.trim() })
+    });
+    toast("已打开目录", "success", 1800);
+  } catch (err){
+    toast(err.message, "error", 4200);
+  }
+}
+
+async function pickDirectory(){
+  const btn = $("pickDirBtn");
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "选择中…";
+  try {
+    const data = await api("/api/pick_dir", { method: "POST" });
+    if (data.path){
+      $("outDir").value = data.path;
+      persistSettings();
+      toast("已选择下载目录", "success", 2200);
+    }
+  } catch (err){
+    toast(err.message, "error", 4200);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+}
+
+/* ---------------- 初始化 ---------------- */
+
+function bindEvents(){
+  $("addForm").addEventListener("submit", addAccount);
+  $("accountBody").addEventListener("click", event => {
+    const button = event.target.closest("button[data-id]");
+    if (button) deleteAccount(Number(button.dataset.id));
+  });
+  $("clearAccountsBtn").addEventListener("click", clearAccounts);
+  $("startBtn").addEventListener("click", startJob);
+  $("pickDirBtn").addEventListener("click", pickDirectory);
+  $("openDirBtn").addEventListener("click", () => openDirectory());
+  $("openResultDir").addEventListener("click", () => {
+    const path = (state.job && state.job.out_dir) || $("outDir").value.trim();
+    openDirectory(path);
+  });
+  bindUpload();
+
+  $("layoutGroup").addEventListener("click", event => {
+    const button = event.target.closest("button[data-layout]");
+    if (button) setLayout(button.dataset.layout, true);
+  });
+
+  ["baseUrl", "outDir", "filenameTemplate", "loginTimeout", "delay", "headed", "history"].forEach(id => {
+    $(id).addEventListener("change", persistSettings);
+  });
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+  restoreSettings();
+  bindEvents();
+
+  try {
+    await loadAccounts();
+  } catch (err){
+    $("serviceStatus").classList.add("offline");
+    $("serviceStatus").querySelector("span:last-child").textContent = "本地服务连接失败";
+    toast("无法连接本地服务：" + err.message, "error", 6000);
+  }
+
+  try {
+    const data = await api("/api/job");
+    state.job = data.job;
+    renderJob();
+    if (data.job.running) schedulePoll(500);
+  } catch (err) {}
+});
+</script>
+</body>
+</html>
