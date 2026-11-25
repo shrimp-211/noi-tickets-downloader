@@ -1,0 +1,11 @@
+# 本项目专用 SSH 私钥，禁止提交
+.ssh/
+
+# 下载产物与运行缓存
+tickets/
+__pycache__/
+*.pyc
+*.log
+
+# 本地编辑器/工具配置
+.claude/

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>NOI 准考证批量下载</title>
+<title>NOI 准考证、证书下载与成绩查询</title>
 <style>
   :root{
     --brand:#c8102e; --brand-dark:#a30b24; --brand-soft:#fdeef0;
@@ -258,6 +258,43 @@
   .mini-loading span:nth-child(3){animation-delay:.3s;margin-right:3px}
   @keyframes bounce{0%,80%,100%{opacity:.25;transform:translateY(0)}40%{opacity:1;transform:translateY(-3px)}}
 
+  /* 证书下载 */
+  .certificates-card{grid-column:1 / -1}
+  .cert-types{display:flex;flex-wrap:wrap;gap:18px;margin-top:10px;font-size:13px}
+  .cert-types label{display:flex;align-items:center;gap:6px;cursor:pointer}
+  .cert-types input{width:15px;height:15px;accent-color:var(--brand)}
+  @media (max-width:1020px){
+    .certificates-card{grid-column:auto}
+  }
+
+  /* 历史成绩 */
+  .scores-card{grid-column:1 / -1}
+  .score-summary{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 4px}
+  .score-groups{display:flex;flex-direction:column;gap:16px;margin-top:8px}
+  .score-group{border:1px solid var(--line);border-radius:12px;padding:12px 13px;background:#fff}
+  .score-group-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px}
+  .score-group-head h3{font-size:13.5px;font-weight:700}
+  .score-group-head span{font-size:12px;color:var(--muted)}
+  .score-table-wrap{overflow:auto;border:1px solid var(--line);border-radius:10px}
+  .score-table{width:100%;border-collapse:collapse;min-width:720px}
+  .score-table th{
+    position:sticky;top:0;background:#f8f9fc;text-align:left;font-size:12px;font-weight:600;
+    color:var(--muted);padding:8px 11px;border-bottom:1px solid var(--line);white-space:nowrap;
+  }
+  .score-table td{padding:8px 11px;border-top:1px solid #eef0f5;font-size:12.8px;white-space:nowrap}
+  .score-table tbody tr:hover{background:#fafbfd}
+  .score-table .num{text-align:right;font-variant-numeric:tabular-nums}
+  .score-table .total{text-align:right;font-weight:700;color:var(--brand);font-variant-numeric:tabular-nums}
+  .score-table tr.unavailable td{color:var(--muted)}
+  .score-table .remark{white-space:normal;min-width:120px;color:var(--muted)}
+  .score-table .detail{white-space:normal;min-width:180px;color:#475467}
+  .score-failures{margin-top:12px;font-size:12.5px;color:var(--red);line-height:1.65}
+  .score-failures strong{font-weight:600}
+  .score-notices{margin-top:10px;font-size:12.5px;color:var(--muted);line-height:1.65}
+  @media (max-width:1020px){
+    .scores-card{grid-column:auto}
+  }
+
   /* 日志 */
   .log-box{margin-top:14px;border-top:1px dashed var(--line);padding-top:10px}
   .log-box summary{cursor:pointer;font-size:12.5px;color:var(--muted);font-weight:600;width:fit-content}
@@ -293,8 +330,8 @@
   <div class="brand">
     <div class="logo">NOI</div>
     <div>
-      <h1>准考证批量下载</h1>
-      <p>登录活动列表 · 逐账号下载准考证 PDF</p>
+      <h1>准考证 · 证书 · 成绩查询</h1>
+      <p>登录活动列表 · 下载准考证与证书 · 查询历史成绩</p>
     </div>
   </div>
   <div class="status-pill" id="serviceStatus"><span class="dot"></span><span>本地服务运行中</span></div>
@@ -446,6 +483,76 @@
       </details>
     </div>
   </section>
+
+  <!-- 证书下载 -->
+  <section class="card certificates-card">
+    <div class="card-head">
+      <h2>证书下载</h2>
+      <div class="head-actions">
+        <button class="text-btn" id="openCertDir" type="button">打开证书目录</button>
+        <button class="btn primary" id="downloadCertsBtn" type="button">下载证书</button>
+      </div>
+    </div>
+    <p class="hint">
+      遍历当前与历史活动，下载可用的获奖 / 等级证书；保存到「下载目录/证书」，沿用上方的目录结构。
+    </p>
+    <div class="cert-types">
+      <label><input type="checkbox" id="certPrize" checked> 获奖证书</label>
+      <label><input type="checkbox" id="certGrade"> 等级证书</label>
+    </div>
+
+    <div class="progress-wrap" id="certProgress" hidden>
+      <div class="progress-meta">
+        <span><b id="certProgressText">0 / 0</b></span>
+        <span id="certPercent">0%</span>
+      </div>
+      <div class="progress"><div class="bar" id="certBar"></div></div>
+      <p class="current" id="certCurrent"></p>
+    </div>
+
+    <div class="score-summary" id="certSummary" hidden></div>
+    <div class="results" id="certResults">
+      <div class="empty">点击「下载证书」后，这里会显示各账号的证书下载情况</div>
+    </div>
+
+    <details class="log-box" id="certLogBox">
+      <summary>证书下载日志</summary>
+      <div class="log" id="certLog"><div class="log-line">暂无日志</div></div>
+    </details>
+  </section>
+
+  <!-- 历史成绩 -->
+  <section class="card scores-card">
+    <div class="card-head">
+      <h2>历史成绩</h2>
+      <div class="head-actions">
+        <button class="btn ghost" id="exportScoresBtn" type="button" disabled>导出表格</button>
+        <button class="btn primary" id="queryScoresBtn" type="button">查询历史成绩</button>
+      </div>
+    </div>
+    <p class="hint" id="scoreHint">
+      登录所有账号，查询「历史活动」中已公布的成绩；复用上方的站点、登录等待、账号间隔与浏览器窗口设置。
+    </p>
+
+    <div class="progress-wrap" id="scoreProgress" hidden>
+      <div class="progress-meta">
+        <span><b id="scoreProgressText">0 / 0</b></span>
+        <span id="scorePercent">0%</span>
+      </div>
+      <div class="progress"><div class="bar" id="scoreBar"></div></div>
+      <p class="current" id="scoreCurrent"></p>
+    </div>
+
+    <div class="score-summary" id="scoreSummary" hidden></div>
+    <div class="score-groups" id="scoreGroups">
+      <div class="empty">点击「查询历史成绩」后，这里会按活动显示各账号成绩</div>
+    </div>
+
+    <details class="log-box" id="scoreLogBox">
+      <summary>成绩查询日志</summary>
+      <div class="log" id="scoreLog"><div class="log-line">暂无日志</div></div>
+    </details>
+  </section>
 </main>
 
 <footer class="foot">账号密码仅保存在本机内存中，服务关闭即清除 · 下载的准考证含个人信息，请注意保管</footer>
@@ -455,7 +562,11 @@
 <script>
 const $ = id => document.getElementById(id);
 
-const state = { accounts: [], job: null, pollTimer: null, layout: "activity" };
+const state = {
+  accounts: [], job: null, pollTimer: null,
+  layout: "activity", scoreJob: null, scorePollTimer: null,
+  certJob: null, certPollTimer: null
+};
 const POLL_INTERVAL = 900;
 
 const LAYOUT_HINTS = {
@@ -517,6 +628,8 @@ function restoreSettings(){
   $("headed").checked = !!saved.headed;
   $("history").checked = !!saved.history;
   $("filenameTemplate").value = saved.filenameTemplate || "{original}";
+  $("certPrize").checked = saved.certPrize !== false;
+  $("certGrade").checked = saved.certGrade === true;
   setLayout(saved.layout || "activity", false);
   if (!$("baseUrl").value) $("baseUrl").value = "https://cspsjtest.noi.cn";
   if (!$("outDir").value) $("outDir").value = "tickets";
@@ -542,7 +655,9 @@ function persistSettings(){
       loginTimeout: $("loginTimeout").value,
       delay: $("delay").value,
       headed: $("headed").checked,
-      history: $("history").checked
+      history: $("history").checked,
+      certPrize: $("certPrize").checked,
+      certGrade: $("certGrade").checked
     }));
   } catch (err) {}
 }
@@ -576,6 +691,16 @@ function updateStartLabel(){
   if (state.job && state.job.running){
     btn.disabled = true;
     btn.textContent = "下载中…";
+    return;
+  }
+  if (state.scoreJob && state.scoreJob.running){
+    btn.disabled = true;
+    btn.textContent = "成绩查询中…";
+    return;
+  }
+  if (state.certJob && state.certJob.running){
+    btn.disabled = true;
+    btn.textContent = "证书下载中…";
     return;
   }
   btn.disabled = false;
@@ -719,6 +844,8 @@ async function startJob(){
       })
     });
     toast("任务已开始", "success", 2200);
+    updateScoreButton();
+    updateCertButton();
     schedulePoll(300);
   } catch (err){
     toast(err.message, "error", 5000);
@@ -738,6 +865,8 @@ async function pollJob(){
     $("serviceStatus").classList.remove("offline");
     $("serviceStatus").querySelector("span:last-child").textContent = "本地服务运行中";
     renderJob();
+    updateScoreButton();
+    updateCertButton();
     if (data.job.running) schedulePoll(POLL_INTERVAL);
     else updateStartLabel();
   } catch (err){
@@ -915,6 +1044,500 @@ function renderLog(job){
   if (nearBottom) el.scrollTop = el.scrollHeight;
 }
 
+/* ---------------- 历史成绩 ---------------- */
+
+function fmtScore(raw){
+  const n = Number(raw);
+  if (!isFinite(n)) return "—";
+  const value = n / 100;
+  if (Number.isInteger(value)) return String(value);
+  return value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function updateScoreButton(){
+  const queryBtn = $("queryScoresBtn");
+  if (!queryBtn) return;
+  const scoreRunning = !!(state.scoreJob && state.scoreJob.running);
+  const downloadRunning = !!(state.job && state.job.running);
+  const certRunning = !!(state.certJob && state.certJob.running);
+
+  queryBtn.disabled = scoreRunning || downloadRunning || certRunning;
+  queryBtn.textContent = scoreRunning ? "查询中…" : "查询历史成绩";
+
+  const exportBtn = $("exportScoresBtn");
+  const hasRecords = !!(state.scoreJob && (state.scoreJob.results || []).some(
+    result => (result.records || []).length > 0
+  ));
+  exportBtn.disabled = scoreRunning || certRunning || !hasRecords;
+}
+
+function updateCertButton(){
+  const btn = $("downloadCertsBtn");
+  if (!btn) return;
+  const certRunning = !!(state.certJob && state.certJob.running);
+  const busy = certRunning ||
+    !!(state.job && state.job.running) ||
+    !!(state.scoreJob && state.scoreJob.running);
+
+  btn.disabled = busy;
+  btn.textContent = certRunning ? "下载中…" : "下载证书";
+}
+
+async function startScoreJob(){
+  persistSettings();
+  if (!state.accounts.length){
+    toast("请先添加账号", "error");
+    return;
+  }
+  const btn = $("queryScoresBtn");
+  btn.disabled = true;
+  btn.textContent = "正在启动…";
+  try {
+    await api("/api/scores/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        base_url: $("baseUrl").value.trim(),
+        headed: $("headed").checked,
+        login_timeout: Number($("loginTimeout").value) || 60,
+        delay: Number($("delay").value) || 0
+      })
+    });
+    toast("成绩查询已开始", "success", 2200);
+    updateCertButton();
+    scheduleScorePoll(300);
+  } catch (err){
+    toast(err.message, "error", 5000);
+    updateScoreButton();
+  }
+}
+
+function scheduleScorePoll(delay){
+  clearTimeout(state.scorePollTimer);
+  state.scorePollTimer = setTimeout(pollScores, delay || POLL_INTERVAL);
+}
+
+async function pollScores(){
+  try {
+    const data = await api("/api/scores");
+    state.scoreJob = data.job;
+    renderScores();
+    if (data.job.running) scheduleScorePoll(POLL_INTERVAL);
+  } catch (err){
+    if (state.scoreJob && state.scoreJob.running) scheduleScorePoll(1800);
+  }
+  updateScoreButton();
+  updateCertButton();
+  updateStartLabel();
+}
+
+function renderScores(){
+  const job = state.scoreJob;
+  const progress = $("scoreProgress");
+  if (!job){
+    progress.hidden = true;
+    updateScoreButton();
+    return;
+  }
+
+  const started = !!(job.running || job.started_at);
+  progress.hidden = !started;
+  if (started){
+    const total = job.total || 0;
+    const done = job.done || 0;
+    const percent = total ? Math.min(100, Math.round(done / total * 100)) : 0;
+    $("scoreProgressText").textContent = done + " / " + total;
+    $("scorePercent").textContent = percent + "%";
+    $("scoreBar").style.width = percent + "%";
+    const current = $("scoreCurrent");
+    if (job.running){
+      current.innerHTML = '<span class="spinner"></span><span>' +
+        esc(job.current ? "正在查询：" + job.current : "正在准备…") + '</span>';
+    } else if (job.finished_at && job.started_at){
+      current.textContent = "已完成 · 用时 " + formatDuration(job.finished_at - job.started_at);
+    } else {
+      current.textContent = "";
+    }
+  }
+
+  renderScoreSummary(job);
+  renderScoreGroups(job);
+  renderScoreLog(job);
+  updateScoreButton();
+}
+
+function renderScoreSummary(job){
+  const el = $("scoreSummary");
+  const results = job.results || [];
+  if (!results.length){
+    el.hidden = true;
+    return;
+  }
+
+  const activities = new Set();
+  let availableCount = 0;
+  let unavailableCount = 0;
+  let failedCount = 0;
+
+  results.forEach(result => {
+    if (result.status === "failed") failedCount += 1;
+    (result.records || []).forEach(record => {
+      activities.add(record.activity_id || record.activity);
+      if (record.available) availableCount += 1;
+      else unavailableCount += 1;
+    });
+  });
+
+  const chips = [
+    '<span class="chip total">' + results.length + ' 个账号</span>',
+    '<span class="chip">' + activities.size + ' 个活动</span>',
+    '<span class="chip success">' + availableCount + ' 条成绩</span>'
+  ];
+  if (unavailableCount) chips.push('<span class="chip partial">' + unavailableCount + ' 条暂无成绩</span>');
+  if (failedCount) chips.push('<span class="chip failed">' + failedCount + ' 个账号失败</span>');
+
+  el.innerHTML = chips.join("");
+  el.hidden = false;
+}
+
+function renderScoreGroups(job){
+  const container = $("scoreGroups");
+  const results = job.results || [];
+
+  if (!results.length){
+    container.innerHTML = '<div class="empty">点击「查询历史成绩」后，这里会按活动显示各账号成绩</div>';
+    return;
+  }
+
+  const groups = new Map();
+  results.forEach(result => {
+    (result.records || []).forEach(record => {
+      const key = record.activity_id || record.activity;
+      if (!groups.has(key)) groups.set(key, { activity: record.activity, records: [] });
+      groups.get(key).records.push({
+        ...record,
+        account: result.account,
+        note: result.note
+      });
+    });
+  });
+
+  let html = Array.from(groups.values()).map(renderScoreGroup).join("");
+  if (!html){
+    html = '<div class="empty">没有查询到成绩信息</div>';
+  }
+
+  const failed = results.filter(result => result.status === "failed");
+  if (failed.length){
+    html += '<div class="score-failures"><strong>查询失败：</strong>' +
+      failed.map(result => esc((result.note || result.account) + "：" + result.message)).join("；") +
+      '</div>';
+  }
+
+  const notices = results.filter(result => !(result.records || []).length && result.status !== "failed");
+  if (notices.length){
+    html += '<div class="score-notices">' +
+      notices.map(result => esc((result.note || result.account) + "：" + (result.message || "没有历史活动"))).join("；") +
+      '</div>';
+  }
+
+  container.innerHTML = html;
+}
+
+function renderScoreGroup(group){
+  const problems = [];
+  group.records.forEach(record => {
+    (record.problems || []).forEach(problem => {
+      if (!problems.includes(problem.name)) problems.push(problem.name);
+    });
+  });
+
+  const header = '<th>账号</th><th>备注</th><th>姓名</th><th>准考证号</th>' +
+    problems.map(name => '<th class="num">' + esc(name) + '</th>').join("") +
+    '<th>各题得分</th><th class="num">总成绩</th><th>成绩备注</th>';
+
+  const rows = group.records.map(record => {
+    if (!record.available){
+      return '<tr class="unavailable">' +
+        '<td class="mono">' + esc(record.account) + '</td>' +
+        '<td>' + esc(record.note || "—") + '</td>' +
+        '<td colspan="' + (problems.length + 5) + '">' + esc(record.message || "暂无成绩信息") + '</td>' +
+      '</tr>';
+    }
+
+    const scoreMap = {};
+    (record.problems || []).forEach(problem => { scoreMap[problem.name] = problem.score; });
+
+    const cells = problems.map(name => {
+      const value = scoreMap[name];
+      return '<td class="num">' + (value === undefined ? "—" : esc(fmtScore(value))) + '</td>';
+    }).join("");
+
+    const detail = (record.problems || []).length
+      ? record.problems.map(problem => problem.name + " " + fmtScore(problem.score)).join("；")
+      : "—";
+
+    return '<tr>' +
+      '<td class="mono">' + esc(record.account) + '</td>' +
+      '<td>' + esc(record.note || "—") + '</td>' +
+      '<td>' + esc(record.name || "—") + '</td>' +
+      '<td class="mono">' + esc(record.ticket_no || "—") + '</td>' +
+      cells +
+      '<td class="detail">' + esc(detail) + '</td>' +
+      '<td class="total">' + esc(fmtScore(record.total)) + '</td>' +
+      '<td class="remark">' + esc(record.remark || "无") + '</td>' +
+    '</tr>';
+  }).join("");
+
+  return '<div class="score-group">' +
+    '<div class="score-group-head"><h3>' + esc(group.activity) + '</h3>' +
+    '<span>' + group.records.length + ' 条</span></div>' +
+    '<div class="score-table-wrap"><table class="score-table"><thead><tr>' + header +
+    '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
+  '</div>';
+}
+
+function renderScoreLog(job){
+  const el = $("scoreLog");
+  const lines = (job.log || []).slice(-150);
+  if (!lines.length){
+    el.innerHTML = '<div class="log-line">暂无日志</div>';
+    return;
+  }
+  const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+  el.innerHTML = lines.map(line =>
+    '<div class="log-line ' + esc(line.level) + '">' +
+      '<span class="t">' + esc(line.time) + '</span>' +
+      '<span>' + esc(line.text) + '</span>' +
+    '</div>'
+  ).join("");
+  if (nearBottom) el.scrollTop = el.scrollHeight;
+}
+
+async function exportScores(){
+  const btn = $("exportScoresBtn");
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "生成中…";
+  try {
+    const response = await fetch("/api/scores/export.xlsx");
+    if (!response.ok){
+      let message = "导出失败";
+      try {
+        const data = await response.json();
+        message = data.message || message;
+      } catch (err) {}
+      throw new Error(message);
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const now = new Date();
+    const pad = value => String(value).padStart(2, "0");
+    link.href = url;
+    link.download = "历史成绩_" + now.getFullYear() + pad(now.getMonth() + 1) +
+      pad(now.getDate()) + "_" + pad(now.getHours()) + pad(now.getMinutes()) + ".xlsx";
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast("已导出成绩表格", "success");
+  } catch (err){
+    toast(err.message, "error", 5000);
+  } finally {
+    btn.textContent = original;
+    updateScoreButton();
+  }
+}
+
+/* ---------------- 证书下载 ---------------- */
+
+async function startCertJob(){
+  persistSettings();
+  if (!state.accounts.length){
+    toast("请先添加账号", "error");
+    return;
+  }
+
+  const types = [];
+  if ($("certPrize").checked) types.push("prize");
+  if ($("certGrade").checked) types.push("grade");
+  if (!types.length){
+    toast("请至少选择一种证书类型", "error");
+    return;
+  }
+
+  const btn = $("downloadCertsBtn");
+  btn.disabled = true;
+  btn.textContent = "正在启动…";
+  try {
+    await api("/api/certificates/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        base_url: $("baseUrl").value.trim(),
+        out_dir: $("outDir").value.trim(),
+        layout: state.layout,
+        types,
+        headed: $("headed").checked,
+        login_timeout: Number($("loginTimeout").value) || 60,
+        delay: Number($("delay").value) || 0
+      })
+    });
+    toast("证书下载已开始", "success", 2200);
+    updateScoreButton();
+    updateStartLabel();
+    scheduleCertPoll(300);
+  } catch (err){
+    toast(err.message, "error", 5000);
+    updateCertButton();
+  }
+}
+
+function scheduleCertPoll(delay){
+  clearTimeout(state.certPollTimer);
+  state.certPollTimer = setTimeout(pollCerts, delay || POLL_INTERVAL);
+}
+
+async function pollCerts(){
+  try {
+    const data = await api("/api/certificates");
+    state.certJob = data.job;
+    renderCerts();
+    if (data.job.running) scheduleCertPoll(POLL_INTERVAL);
+  } catch (err){
+    if (state.certJob && state.certJob.running) scheduleCertPoll(1800);
+  }
+  updateCertButton();
+  updateScoreButton();
+  updateStartLabel();
+}
+
+function renderCerts(){
+  const job = state.certJob;
+  const progress = $("certProgress");
+  if (!job){
+    progress.hidden = true;
+    updateCertButton();
+    return;
+  }
+
+  const started = !!(job.running || job.started_at);
+  progress.hidden = !started;
+  if (started){
+    const total = job.total || 0;
+    const done = job.done || 0;
+    const percent = total ? Math.min(100, Math.round(done / total * 100)) : 0;
+    $("certProgressText").textContent = done + " / " + total;
+    $("certPercent").textContent = percent + "%";
+    $("certBar").style.width = percent + "%";
+    const current = $("certCurrent");
+    if (job.running){
+      current.innerHTML = '<span class="spinner"></span><span>' +
+        esc(job.current ? "正在处理：" + job.current : "正在准备…") + '</span>';
+    } else if (job.finished_at && job.started_at){
+      current.textContent = "已完成 · 用时 " + formatDuration(job.finished_at - job.started_at);
+    } else {
+      current.textContent = "";
+    }
+  }
+
+  renderCertSummary(job);
+  renderCertResults(job);
+  renderCertLog(job);
+  updateCertButton();
+}
+
+function renderCertSummary(job){
+  const el = $("certSummary");
+  const results = job.results || [];
+  if (!results.length){
+    el.hidden = true;
+    return;
+  }
+
+  const counts = {};
+  let fileCount = 0;
+  let skippedCount = 0;
+  results.forEach(result => {
+    counts[result.status] = (counts[result.status] || 0) + 1;
+    fileCount += (result.files || []).length;
+    skippedCount += (result.skipped || []).length;
+  });
+
+  const chips = ['<span class="chip total">共下载 ' + fileCount + ' 份</span>'];
+  [["success", "成功", "success"], ["partial", "部分成功", "partial"],
+   ["failed", "失败", "failed"], ["skipped", "无可下载", ""], ["empty", "无活动", ""]]
+    .forEach(item => {
+      if (counts[item[0]]){
+        chips.push('<span class="chip ' + item[2] + '">' + item[1] + " " + counts[item[0]] + "</span>");
+      }
+    });
+  if (skippedCount) chips.push('<span class="chip partial">' + skippedCount + ' 项未下载</span>');
+
+  el.innerHTML = chips.join("");
+  el.hidden = false;
+}
+
+function renderCertResults(job){
+  const container = $("certResults");
+  const results = job.results || [];
+  if (!results.length){
+    container.innerHTML = '<div class="empty">点击「下载证书」后，这里会显示各账号的证书下载情况</div>';
+    return;
+  }
+  container.innerHTML = results.map(renderCertResult).join("");
+}
+
+function renderCertResult(result){
+  const meta = STATUS_META[result.status] || ["未知", "neutral"];
+  const files = (result.files || []).map(file =>
+    '<div class="file">' +
+      '<span class="file-ico">' + FILE_SVG + '</span>' +
+      '<span class="file-name" title="' + esc(file.path) + '">' + esc(file.name) + '</span>' +
+      '<span class="file-act">' + esc(file.activity) + " · " + esc(file.type) + '</span>' +
+    '</div>'
+  ).join("");
+
+  const skipped = (result.skipped || []).map(item =>
+    "<li><span>" + esc(item.activity) + "（" + esc(item.type) + "）</span><em>" +
+      esc(item.reason) + "</em></li>"
+  ).join("");
+
+  return '<div class="result-item">' +
+    '<div class="result-top">' +
+      '<span class="badge ' + meta[1] + '">' + meta[0] + '</span>' +
+      '<span class="result-name">' + esc(result.note || result.account) + '</span>' +
+      (result.note ? '<span class="result-account mono">' + esc(result.account) + '</span>' : '') +
+    '</div>' +
+    (result.message ? '<p class="result-msg">' + esc(result.message) + '</p>' : '') +
+    (result.status === "running" ? '<div class="mini-loading"><span></span><span></span><span></span>处理中…</div>' : '') +
+    (files ? '<div class="files">' + files + '</div>' : '') +
+    (skipped ? '<details class="skip-details"><summary>' + result.skipped.length +
+      ' 个证书未下载</summary><ul>' + skipped + '</ul></details>' : '') +
+  '</div>';
+}
+
+function renderCertLog(job){
+  const el = $("certLog");
+  const lines = (job.log || []).slice(-150);
+  if (!lines.length){
+    el.innerHTML = '<div class="log-line">暂无日志</div>';
+    return;
+  }
+  const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+  el.innerHTML = lines.map(line =>
+    '<div class="log-line ' + esc(line.level) + '">' +
+      '<span class="t">' + esc(line.time) + '</span>' +
+      '<span>' + esc(line.text) + '</span>' +
+    '</div>'
+  ).join("");
+  if (nearBottom) el.scrollTop = el.scrollHeight;
+}
+
+function openCertDirectory(){
+  const base = (state.certJob && state.certJob.out_dir) || $("outDir").value.trim() || "tickets";
+  openDirectory(base.replace(/[\\/]+$/, "") + "/证书");
+}
+
 /* ---------------- 目录 ---------------- */
 
 async function openDirectory(path){
@@ -960,6 +1583,10 @@ function bindEvents(){
   });
   $("clearAccountsBtn").addEventListener("click", clearAccounts);
   $("startBtn").addEventListener("click", startJob);
+  $("queryScoresBtn").addEventListener("click", startScoreJob);
+  $("exportScoresBtn").addEventListener("click", exportScores);
+  $("downloadCertsBtn").addEventListener("click", startCertJob);
+  $("openCertDir").addEventListener("click", openCertDirectory);
   $("pickDirBtn").addEventListener("click", pickDirectory);
   $("openDirBtn").addEventListener("click", () => openDirectory());
   $("openResultDir").addEventListener("click", () => {
@@ -973,7 +1600,8 @@ function bindEvents(){
     if (button) setLayout(button.dataset.layout, true);
   });
 
-  ["baseUrl", "outDir", "filenameTemplate", "loginTimeout", "delay", "headed", "history"].forEach(id => {
+  ["baseUrl", "outDir", "filenameTemplate", "loginTimeout", "delay", "headed", "history",
+   "certPrize", "certGrade"].forEach(id => {
     $(id).addEventListener("change", persistSettings);
   });
 }
@@ -996,6 +1624,24 @@ document.addEventListener("DOMContentLoaded", async () => {
     renderJob();
     if (data.job.running) schedulePoll(500);
   } catch (err) {}
+
+  try {
+    const data = await api("/api/scores");
+    state.scoreJob = data.job;
+    renderScores();
+    if (data.job.running) scheduleScorePoll(500);
+  } catch (err) {}
+
+  try {
+    const data = await api("/api/certificates");
+    state.certJob = data.job;
+    renderCerts();
+    if (data.job.running) scheduleCertPoll(500);
+  } catch (err) {}
+
+  updateScoreButton();
+  updateCertButton();
+  updateStartLabel();
 });
 </script>
 </body>

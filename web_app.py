@@ -4,7 +4,7 @@
 NOI 准考证批量下载 —— 本地网页版
 
 在浏览器中管理多个账号（手动添加 / 上传 CSV、Excel），自定义下载目录，
-一键批量登录并下载各账号的活动准考证。
+一键批量登录并下载各账号的活动准考证、获奖/等级证书，并查询历史活动成绩、导出 Excel。
 
 启动：
     python web_app.py
@@ -59,6 +59,40 @@ JOB: Dict = {
 
 MAX_LOG_LINES = 300
 
+SCORE_RESP_CLASS = 1558219344   # 成绩信息响应类
+SCORE_ERROR_CLASS = 619155620   # 通用错误消息类
+
+SCORE_LOCK = threading.RLock()
+SCORE_JOB: Dict = {
+    "running": False,
+    "total": 0,
+    "done": 0,
+    "current": "",
+    "started_at": None,
+    "finished_at": None,
+    "results": [],
+    "log": [],
+}
+
+CERTIFICATE_TYPES = {
+    "prize": ("获奖证书", "download_prize_certificate"),
+    "grade": ("等级证书", "download_grade_certificate"),
+}
+
+CERT_LOCK = threading.RLock()
+CERT_JOB: Dict = {
+    "running": False,
+    "total": 0,
+    "done": 0,
+    "current": "",
+    "out_dir": "",
+    "layout": "",
+    "started_at": None,
+    "finished_at": None,
+    "results": [],
+    "log": [],
+}
+
 # 表头别名（小写比较）
 USER_HEADERS = {"账号", "用户名", "手机号", "用户", "邮箱", "user", "username", "account", "login"}
 PASS_HEADERS = {"密码", "password", "passwd", "pwd", "pass"}
@@ -72,6 +106,13 @@ def now_ts() -> float:
     return time.time()
 
 
+def concise_error(exc: Exception) -> str:
+    """异常信息只保留首行，避免 Playwright 调用日志撑满界面。"""
+    text = str(exc).strip()
+    first_line = text.splitlines()[0] if text else ""
+    return f"{type(exc).__name__}: {first_line}" if first_line else type(exc).__name__
+
+
 def log_line(text: str, level: str = "info") -> None:
     with JOB_LOCK:
         JOB["log"].append(
@@ -79,6 +120,24 @@ def log_line(text: str, level: str = "info") -> None:
         )
         if len(JOB["log"]) > MAX_LOG_LINES:
             del JOB["log"][: len(JOB["log"]) - MAX_LOG_LINES]
+
+
+def score_log(text: str, level: str = "info") -> None:
+    with SCORE_LOCK:
+        SCORE_JOB["log"].append(
+            {"time": time.strftime("%H:%M:%S"), "level": level, "text": text}
+        )
+        if len(SCORE_JOB["log"]) > MAX_LOG_LINES:
+            del SCORE_JOB["log"][: len(SCORE_JOB["log"]) - MAX_LOG_LINES]
+
+
+def cert_log(text: str, level: str = "info") -> None:
+    with CERT_LOCK:
+        CERT_JOB["log"].append(
+            {"time": time.strftime("%H:%M:%S"), "level": level, "text": text}
+        )
+        if len(CERT_JOB["log"]) > MAX_LOG_LINES:
+            del CERT_JOB["log"][: len(CERT_JOB["log"]) - MAX_LOG_LINES]
 
 
 PHONE_PATTERN = re.compile(r"(\+?86[\s-]?)?(1[3-9]\d{9})")
@@ -181,6 +240,107 @@ def make_filename_builder(template: str, user_tag: str, account: dict):
         )
 
     return builder
+
+
+# ---------------------------------------------------------------- 成绩解析
+
+
+def format_score(raw) -> str:
+    """站点分数以 100 为系数存储，转换为可读分数。"""
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return str(raw)
+    if value % 100 == 0:
+        return str(value // 100)
+    if value % 10 == 0:
+        return f"{value / 100:.1f}"
+    return f"{value / 100:.2f}"
+
+
+def parse_score_response(data: bytes) -> dict:
+    """解析成绩查询响应。"""
+    reader = core.Reader(data)
+    magic = reader.varint()
+
+    if magic == SCORE_RESP_CLASS:
+        try:
+            activity_title = reader.string()
+            ticket_no = reader.string()
+            name = reader.string()
+            count = reader.varint()
+            problems = []
+            for _ in range(count):
+                problem_name = reader.string()
+                score = reader.varint()
+                reader.varint()  # 申诉相关标记，暂不使用
+                problems.append({"name": problem_name, "score": score})
+            total = reader.varint()
+            remark = reader.string()
+        except Exception as exc:
+            return {"available": False, "message": f"成绩数据解析失败：{exc}"}
+        return {
+            "available": True,
+            "activity_title": activity_title,
+            "name": name,
+            "ticket_no": ticket_no,
+            "problems": problems,
+            "total": total,
+            "remark": remark,
+        }
+
+    if magic == SCORE_ERROR_CLASS:
+        try:
+            message = reader.string()
+        except Exception:
+            message = ""
+        return {"available": False, "message": message or "暂无成绩信息"}
+
+    return {"available": False, "message": f"未知成绩响应（{magic}）"}
+
+
+# ---------------------------------------------------------------- 证书下载
+
+
+def certificate_filename(activity, label: str, original_filename: Optional[str]) -> str:
+    activity_part = core.sanitize_filename(activity.name)
+    prefix = f"{activity_part}_{label}"
+    if original_filename:
+        original = core.sanitize_filename(original_filename)
+        filename = f"{prefix}_{original}"
+    else:
+        filename = f"{prefix}_{activity.id}.pdf"
+    if not filename.lower().endswith(".pdf"):
+        filename += ".pdf"
+    return filename
+
+
+def download_certificate(
+    request, base_url: str, activity, cert_key: str, out_dir: str
+) -> Tuple[Optional[str], Optional[str]]:
+    """下载单个活动的证书，返回 (保存路径, 失败原因)。"""
+    label, endpoint = CERTIFICATE_TYPES[cert_key]
+    response = request.get(
+        f"{base_url}/api/contestant/activity/{endpoint}?id={activity.id}",
+        timeout=60_000,
+    )
+    if response.status != 200:
+        return None, f"HTTP {response.status}"
+
+    data = response.body()
+    content_type = (response.headers.get("content-type") or "").split(";")[0].strip().lower()
+    if data[:5] == b"%PDF-" or content_type == "application/pdf":
+        original = core.filename_from_disposition(response.headers.get("content-disposition"))
+        filename = certificate_filename(activity, label, original)
+        path = core.unique_path(out_dir, filename)
+        with open(path, "wb") as fh:
+            fh.write(data)
+        return path, None
+
+    message = core.decode_message(data)
+    if message:
+        return None, message
+    return None, f"返回内容不是 PDF（content-type={content_type or '未知'}，{len(data)} 字节）"
 
 
 def cell_text(value) -> str:
@@ -463,7 +623,7 @@ def run_job(config: dict, accounts: List[dict]) -> None:
                         "skipped": [],
                     }
                     with JOB_LOCK:
-                        JOB["results"].append(dict(result))
+                        JOB["results"].append(deepcopy(result))
                         result_index = len(JOB["results"]) - 1
                         JOB["current"] = label
 
@@ -565,7 +725,7 @@ def run_job(config: dict, accounts: List[dict]) -> None:
                         log_line(f"{mask_account(username)} 登录失败：{message}", "error")
                     except Exception as exc:  # 单账号异常不影响后续账号
                         result["status"] = "failed"
-                        result["message"] = f"{type(exc).__name__}: {exc}"
+                        result["message"] = concise_error(exc)
                         log_line(f"{mask_account(username)} 处理失败：{exc}", "error")
                     finally:
                         if context is not None:
@@ -601,6 +761,552 @@ def run_job(config: dict, accounts: List[dict]) -> None:
         log_line("任务结束")
 
 
+# ---------------------------------------------------------------- 成绩查询任务
+
+
+def reset_score_job(total: int) -> None:
+    with SCORE_LOCK:
+        SCORE_JOB.update(
+            {
+                "running": True,
+                "total": total,
+                "done": 0,
+                "current": "",
+                "started_at": now_ts(),
+                "finished_at": None,
+                "results": [],
+                "log": [],
+            }
+        )
+
+
+def run_score_job(config: dict, accounts: List[dict]) -> None:
+    base_url = config["base_url"]
+    delay = config["delay"]
+    score_log(f"成绩查询开始，共 {len(accounts)} 个账号")
+
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=not config["headed"])
+            try:
+                for index, account in enumerate(accounts, 1):
+                    username = account["username"]
+                    label = account.get("note") or mask_account(username)
+                    result = {
+                        "account": mask_account(username),
+                        "note": account.get("note", ""),
+                        "status": "running",
+                        "message": "",
+                        "records": [],
+                    }
+                    with SCORE_LOCK:
+                        SCORE_JOB["results"].append(deepcopy(result))
+                        result_index = len(SCORE_JOB["results"]) - 1
+                        SCORE_JOB["current"] = label
+
+                    score_log(f"[{index}/{len(accounts)}] {label} 开始查询")
+                    context = None
+                    try:
+                        context = browser.new_context(viewport={"width": 1280, "height": 900})
+                        page = context.new_page()
+                        page.set_default_timeout(30_000)
+                        core.login(
+                            page,
+                            base_url,
+                            username,
+                            account["password"],
+                            config["login_timeout"],
+                        )
+
+                        activities = core.fetch_all_activities(
+                            context.request, base_url, core.TAB_HISTORY, False, 50
+                        )
+                        if not activities:
+                            result["status"] = "empty"
+                            result["message"] = "没有历史活动"
+                            score_log(f"{mask_account(username)} 没有历史活动")
+                        else:
+                            for activity in activities:
+                                record = {
+                                    "activity": activity.name,
+                                    "activity_id": activity.id,
+                                }
+                                try:
+                                    response = context.request.post(
+                                        f"{base_url}/api/contestant/activity/"
+                                        f"get_score_info?id={activity.id}",
+                                        timeout=30_000,
+                                    )
+                                    if response.status != 200:
+                                        record.update(
+                                            {
+                                                "available": False,
+                                                "message": f"HTTP {response.status}",
+                                            }
+                                        )
+                                    else:
+                                        record.update(parse_score_response(response.body()))
+                                except Exception as exc:
+                                    record.update(
+                                        {"available": False, "message": f"查询失败：{exc}"}
+                                    )
+                                result["records"].append(record)
+
+                                if record.get("available"):
+                                    score_log(
+                                        f"{mask_account(username)} {activity.name}："
+                                        f"总分 {format_score(record.get('total', 0))}"
+                                    )
+                                else:
+                                    score_log(
+                                        f"{mask_account(username)} {activity.name}："
+                                        f"{record.get('message', '暂无成绩信息')}",
+                                        "warn",
+                                    )
+
+                            if any(r.get("available") for r in result["records"]):
+                                result["status"] = "success"
+                            else:
+                                result["status"] = "empty"
+                                result["message"] = "所有历史活动暂无成绩信息"
+                    except core.LoginError as exc:
+                        message = str(exc).strip()
+                        result["status"] = "failed"
+                        result["message"] = (
+                            message
+                            if message.startswith("登录失败")
+                            else f"登录失败：{message}"
+                        )
+                        score_log(f"{mask_account(username)} 登录失败：{message}", "error")
+                    except Exception as exc:
+                        result["status"] = "failed"
+                        result["message"] = concise_error(exc)
+                        score_log(f"{mask_account(username)} 查询失败：{exc}", "error")
+                    finally:
+                        if context is not None:
+                            try:
+                                context.close()
+                            except Exception:
+                                pass
+
+                    with SCORE_LOCK:
+                        SCORE_JOB["results"][result_index] = result
+                        SCORE_JOB["done"] = index
+                        SCORE_JOB["current"] = ""
+
+                    if index < len(accounts) and delay > 0:
+                        time.sleep(delay)
+            finally:
+                try:
+                    browser.close()
+                except Exception:
+                    pass
+    except Exception as exc:
+        score_log(f"成绩查询异常终止：{exc}", "error")
+        with SCORE_LOCK:
+            for result in SCORE_JOB["results"]:
+                if result["status"] == "running":
+                    result["status"] = "failed"
+                    result["message"] = f"任务中断：{exc}"
+    finally:
+        with SCORE_LOCK:
+            SCORE_JOB["running"] = False
+            SCORE_JOB["current"] = ""
+            SCORE_JOB["finished_at"] = now_ts()
+        score_log("成绩查询结束")
+
+
+def _score_groups(job: dict) -> List[dict]:
+    groups = {}
+    order = []
+    for result in job.get("results", []):
+        for record in result.get("records", []):
+            key = record.get("activity_id") or record.get("activity")
+            if key not in groups:
+                groups[key] = {"activity": record.get("activity", ""), "records": []}
+                order.append(key)
+            groups[key]["records"].append(
+                {
+                    "account": result.get("account", ""),
+                    "note": result.get("note", ""),
+                    **record,
+                }
+            )
+    return [groups[key] for key in order]
+
+
+def _unique_sheet_name(workbook, base: str) -> str:
+    base = re.sub(r"[\[\]:*?/\\]", "_", base or "").strip() or "活动"
+    base = base[:31]
+    name = base
+    index = 2
+    while name in workbook.sheetnames:
+        suffix = f"({index})"
+        name = base[: 31 - len(suffix)] + suffix
+        index += 1
+    return name
+
+
+def _style_score_sheet(ws, problem_count: int) -> None:
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    header_fill = PatternFill("solid", fgColor="F2F4F7")
+    for cell in ws[1]:
+        cell.fill = header_fill
+        cell.font = Font(bold=True)
+        cell.alignment = Alignment(vertical="center")
+    ws.freeze_panes = "A2"
+    widths = [20, 14, 12, 16] + [12] * problem_count + [10, 24]
+    for index, width in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(index)].width = width
+
+
+def build_scores_workbook(job: dict):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+
+    workbook = Workbook()
+    summary = workbook.active
+    summary.title = "成绩汇总"
+    summary.append(
+        ["账号", "备注", "活动", "姓名", "准考证号", "题目得分", "总成绩", "成绩备注"]
+    )
+
+    groups = _score_groups(job)
+    for result in job.get("results", []):
+        records = result.get("records") or []
+        if not records:
+            summary.append(
+                [
+                    result.get("account", ""),
+                    result.get("note", ""),
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    result.get("message", ""),
+                ]
+            )
+            continue
+        for record in records:
+            if record.get("available"):
+                detail = "；".join(
+                    f"{item.get('name', '')} {format_score(item.get('score', 0))}"
+                    for item in record.get("problems", [])
+                )
+                summary.append(
+                    [
+                        result.get("account", ""),
+                        result.get("note", ""),
+                        record.get("activity", ""),
+                        record.get("name", ""),
+                        record.get("ticket_no", ""),
+                        detail,
+                        record.get("total", 0) / 100,
+                        record.get("remark") or "无",
+                    ]
+                )
+            else:
+                summary.append(
+                    [
+                        result.get("account", ""),
+                        result.get("note", ""),
+                        record.get("activity", ""),
+                        "",
+                        "",
+                        "",
+                        "",
+                        record.get("message", "暂无成绩信息"),
+                    ]
+                )
+
+    for row in summary.iter_rows(min_row=2, min_col=7, max_col=7):
+        row[0].number_format = "0.##"
+    widths = {"A": 20, "B": 14, "C": 26, "D": 12, "E": 16, "F": 40, "G": 10, "H": 24}
+    for column, width in widths.items():
+        summary.column_dimensions[column].width = width
+    summary.freeze_panes = "A2"
+    header_fill = PatternFill("solid", fgColor="F2F4F7")
+    for cell in summary[1]:
+        cell.fill = header_fill
+        cell.font = Font(bold=True)
+
+    detail_rows = []
+    for result in job.get("results", []):
+        for record in result.get("records", []):
+            if not record.get("available"):
+                continue
+            for problem in record.get("problems", []) or []:
+                detail_rows.append(
+                    [
+                        result.get("account", ""),
+                        result.get("note", ""),
+                        record.get("activity", ""),
+                        record.get("name", ""),
+                        record.get("ticket_no", ""),
+                        problem.get("name", ""),
+                        problem.get("score", 0) / 100,
+                    ]
+                )
+
+    if detail_rows:
+        detail_sheet = workbook.create_sheet("题目得分明细")
+        detail_sheet.append(
+            ["账号", "备注", "活动", "姓名", "准考证号", "题目名称", "得分"]
+        )
+        for row in detail_rows:
+            detail_sheet.append(row)
+        for row in detail_sheet.iter_rows(min_row=2, min_col=7, max_col=7):
+            row[0].number_format = "0.##"
+        widths = {"A": 20, "B": 14, "C": 26, "D": 12, "E": 16, "F": 22, "G": 10}
+        for column, width in widths.items():
+            detail_sheet.column_dimensions[column].width = width
+        detail_sheet.freeze_panes = "A2"
+        for cell in detail_sheet[1]:
+            cell.fill = header_fill
+            cell.font = Font(bold=True)
+
+    for group in groups:
+        ws = workbook.create_sheet(_unique_sheet_name(workbook, group["activity"]))
+        problems: List[str] = []
+        for record in group["records"]:
+            for item in record.get("problems", []) or []:
+                if item.get("name") not in problems:
+                    problems.append(item.get("name"))
+
+        ws.append(["账号", "备注", "姓名", "准考证号"] + problems + ["总成绩", "成绩备注"])
+        for record in group["records"]:
+            if record.get("available"):
+                score_map = {
+                    item.get("name"): item.get("score", 0)
+                    for item in record.get("problems", [])
+                }
+                row = [
+                    record.get("account", ""),
+                    record.get("note", ""),
+                    record.get("name", ""),
+                    record.get("ticket_no", ""),
+                ]
+                row.extend(
+                    score_map[name] / 100 if name in score_map else "—" for name in problems
+                )
+                row.append(record.get("total", 0) / 100)
+                row.append(record.get("remark") or "无")
+            else:
+                row = [
+                    record.get("account", ""),
+                    record.get("note", ""),
+                    "",
+                    "",
+                ] + [""] * len(problems) + ["", record.get("message", "暂无成绩信息")]
+            ws.append(row)
+
+        total_column = 5 + len(problems)
+        for row in ws.iter_rows(
+            min_row=2, min_col=total_column, max_col=total_column
+        ):
+            row[0].number_format = "0.##"
+        _style_score_sheet(ws, len(problems))
+
+    return workbook
+
+
+# ---------------------------------------------------------------- 证书下载任务
+
+
+def reset_cert_job(total: int, out_dir: str, layout: str) -> None:
+    with CERT_LOCK:
+        CERT_JOB.update(
+            {
+                "running": True,
+                "total": total,
+                "done": 0,
+                "current": "",
+                "out_dir": out_dir,
+                "layout": layout,
+                "started_at": now_ts(),
+                "finished_at": None,
+                "results": [],
+                "log": [],
+            }
+        )
+
+
+def run_cert_job(config: dict, accounts: List[dict]) -> None:
+    base_url = config["base_url"]
+    out_dir = config["out_dir"]
+    layout = config["layout"]
+    delay = config["delay"]
+    cert_root = os.path.join(out_dir, "证书")
+    cert_log(f"证书下载开始，共 {len(accounts)} 个账号")
+
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=not config["headed"])
+            try:
+                for index, account in enumerate(accounts, 1):
+                    username = account["username"]
+                    label = account.get("note") or mask_account(username)
+                    result = {
+                        "account": mask_account(username),
+                        "note": account.get("note", ""),
+                        "status": "running",
+                        "message": "",
+                        "files": [],
+                        "skipped": [],
+                    }
+                    with CERT_LOCK:
+                        CERT_JOB["results"].append(deepcopy(result))
+                        result_index = len(CERT_JOB["results"]) - 1
+                        CERT_JOB["current"] = label
+
+                    cert_log(f"[{index}/{len(accounts)}] {label} 开始下载")
+                    context = None
+                    try:
+                        context = browser.new_context(viewport={"width": 1280, "height": 900})
+                        page = context.new_page()
+                        page.set_default_timeout(30_000)
+                        core.login(
+                            page,
+                            base_url,
+                            username,
+                            account["password"],
+                            config["login_timeout"],
+                        )
+
+                        current = core.fetch_all_activities(
+                            context.request, base_url, core.TAB_CURRENT, False, 50
+                        )
+                        history = core.fetch_all_activities(
+                            context.request, base_url, core.TAB_HISTORY, False, 50
+                        )
+                        activities = []
+                        seen = set()
+                        for activity in current + history:
+                            if activity.id not in seen:
+                                seen.add(activity.id)
+                                activities.append(activity)
+
+                        if not activities:
+                            result["status"] = "empty"
+                            result["message"] = "没有找到活动"
+                            cert_log(f"{mask_account(username)} 没有活动")
+                        else:
+                            user_tag = account_folder(account)
+                            for activity in activities:
+                                for cert_key in config["types"]:
+                                    cert_label, _ = CERTIFICATE_TYPES[cert_key]
+                                    folder = resolve_target(
+                                        layout, cert_root, user_tag, activity
+                                    )
+                                    try:
+                                        os.makedirs(folder, exist_ok=True)
+                                    except OSError as exc:
+                                        result["skipped"].append(
+                                            {
+                                                "activity": activity.name,
+                                                "type": cert_label,
+                                                "reason": f"无法创建目录：{exc}",
+                                            }
+                                        )
+                                        continue
+
+                                    path, reason = download_certificate(
+                                        context.request,
+                                        base_url,
+                                        activity,
+                                        cert_key,
+                                        folder,
+                                    )
+                                    if path:
+                                        result["files"].append(
+                                            {
+                                                "name": os.path.basename(path),
+                                                "path": path,
+                                                "activity": activity.name,
+                                                "type": cert_label,
+                                            }
+                                        )
+                                        cert_log(
+                                            f"{mask_account(username)} 已保存 "
+                                            f"{os.path.basename(path)}"
+                                        )
+                                    else:
+                                        result["skipped"].append(
+                                            {
+                                                "activity": activity.name,
+                                                "type": cert_label,
+                                                "reason": reason,
+                                            }
+                                        )
+                                        cert_log(
+                                            f"{mask_account(username)} 跳过"
+                                            f"「{activity.name}」{cert_label}：{reason}",
+                                            "warn",
+                                        )
+                                        if folder != cert_root:
+                                            try:
+                                                if not os.listdir(folder):
+                                                    os.rmdir(folder)
+                                            except OSError:
+                                                pass
+
+                            if result["files"] and result["skipped"]:
+                                result["status"] = "partial"
+                            elif result["files"]:
+                                result["status"] = "success"
+                            else:
+                                result["status"] = "skipped"
+                                result["message"] = "没有可下载的证书"
+                    except core.LoginError as exc:
+                        message = str(exc).strip()
+                        result["status"] = "failed"
+                        result["message"] = (
+                            message
+                            if message.startswith("登录失败")
+                            else f"登录失败：{message}"
+                        )
+                        cert_log(f"{mask_account(username)} 登录失败：{message}", "error")
+                    except Exception as exc:
+                        result["status"] = "failed"
+                        result["message"] = concise_error(exc)
+                        cert_log(f"{mask_account(username)} 下载失败：{exc}", "error")
+                    finally:
+                        if context is not None:
+                            try:
+                                context.close()
+                            except Exception:
+                                pass
+
+                    with CERT_LOCK:
+                        CERT_JOB["results"][result_index] = result
+                        CERT_JOB["done"] = index
+                        CERT_JOB["current"] = ""
+
+                    if index < len(accounts) and delay > 0:
+                        time.sleep(delay)
+            finally:
+                try:
+                    browser.close()
+                except Exception:
+                    pass
+    except Exception as exc:
+        cert_log(f"证书下载异常终止：{exc}", "error")
+        with CERT_LOCK:
+            for result in CERT_JOB["results"]:
+                if result["status"] == "running":
+                    result["status"] = "failed"
+                    result["message"] = f"任务中断：{exc}"
+    finally:
+        with CERT_LOCK:
+            CERT_JOB["running"] = False
+            CERT_JOB["current"] = ""
+            CERT_JOB["finished_at"] = now_ts()
+        cert_log("证书下载结束")
+
+
 @app.post("/api/start")
 def api_start():
     payload = request.get_json(silent=True) or {}
@@ -608,6 +1314,12 @@ def api_start():
     with JOB_LOCK:
         if JOB["running"]:
             return jsonify({"ok": False, "message": "已有任务正在执行，请等待完成"}), 409
+    with SCORE_LOCK:
+        if SCORE_JOB["running"]:
+            return jsonify({"ok": False, "message": "成绩查询正在执行，请等待完成"}), 409
+    with CERT_LOCK:
+        if CERT_JOB["running"]:
+            return jsonify({"ok": False, "message": "证书下载正在执行，请等待完成"}), 409
 
     with ACCOUNT_LOCK:
         accounts = [deepcopy(account) for account in ACCOUNTS]
@@ -669,6 +1381,169 @@ def api_start():
 def api_job():
     with JOB_LOCK:
         return jsonify({"ok": True, "job": deepcopy(JOB)})
+
+
+@app.post("/api/scores/start")
+def api_scores_start():
+    payload = request.get_json(silent=True) or {}
+
+    with JOB_LOCK:
+        if JOB["running"]:
+            return jsonify({"ok": False, "message": "下载任务正在执行，请等待完成"}), 409
+    with SCORE_LOCK:
+        if SCORE_JOB["running"]:
+            return jsonify({"ok": False, "message": "成绩查询正在执行，请等待完成"}), 409
+    with CERT_LOCK:
+        if CERT_JOB["running"]:
+            return jsonify({"ok": False, "message": "证书下载正在执行，请等待完成"}), 409
+
+    with ACCOUNT_LOCK:
+        accounts = [deepcopy(account) for account in ACCOUNTS]
+    if not accounts:
+        return jsonify({"ok": False, "message": "账号列表为空，请先添加账号"}), 400
+
+    base_url = str(payload.get("base_url") or core.DEFAULT_BASE_URL).strip().rstrip("/")
+    if not re.match(r"^https?://[^\s/]+", base_url):
+        return jsonify(
+            {"ok": False, "message": "站点地址格式不正确（需以 http:// 或 https:// 开头）"}
+        ), 400
+
+    try:
+        login_timeout = max(10, min(300, int(payload.get("login_timeout") or 60)))
+    except (TypeError, ValueError):
+        login_timeout = 60
+    try:
+        delay = max(0.0, min(10.0, float(payload.get("delay", 1))))
+    except (TypeError, ValueError):
+        delay = 1.0
+
+    config = {
+        "base_url": base_url,
+        "headed": bool(payload.get("headed")),
+        "login_timeout": login_timeout,
+        "delay": delay,
+    }
+
+    reset_score_job(len(accounts))
+    thread = threading.Thread(target=run_score_job, args=(config, accounts), daemon=True)
+    thread.start()
+    return jsonify({"ok": True, "message": "成绩查询已开始", "total": len(accounts)})
+
+
+@app.get("/api/scores")
+def api_scores():
+    with SCORE_LOCK:
+        return jsonify({"ok": True, "job": deepcopy(SCORE_JOB)})
+
+
+@app.get("/api/scores/export.xlsx")
+def api_scores_export():
+    with SCORE_LOCK:
+        job = deepcopy(SCORE_JOB)
+    record_count = sum(len(result.get("records") or []) for result in job.get("results", []))
+    if not record_count:
+        return jsonify({"ok": False, "message": "暂无可导出的成绩数据，请先查询"}), 404
+
+    workbook = build_scores_workbook(job)
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    buffer.seek(0)
+    filename = f"历史成绩_{time.strftime('%Y%m%d_%H%M')}.xlsx"
+    return send_file(
+        buffer,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        as_attachment=True,
+        download_name=filename,
+    )
+
+
+@app.post("/api/certificates/start")
+def api_certificates_start():
+    payload = request.get_json(silent=True) or {}
+
+    with JOB_LOCK:
+        if JOB["running"]:
+            return jsonify({"ok": False, "message": "下载任务正在执行，请等待完成"}), 409
+    with SCORE_LOCK:
+        if SCORE_JOB["running"]:
+            return jsonify({"ok": False, "message": "成绩查询正在执行，请等待完成"}), 409
+    with CERT_LOCK:
+        if CERT_JOB["running"]:
+            return jsonify({"ok": False, "message": "证书下载正在执行，请等待完成"}), 409
+
+    with ACCOUNT_LOCK:
+        accounts = [deepcopy(account) for account in ACCOUNTS]
+    if not accounts:
+        return jsonify({"ok": False, "message": "账号列表为空，请先添加账号"}), 400
+
+    raw_out = str(payload.get("out_dir") or "tickets").strip() or "tickets"
+    out_dir = os.path.abspath(os.path.expanduser(raw_out))
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+        probe = os.path.join(out_dir, ".write_test")
+        with open(probe, "w", encoding="utf-8") as fh:
+            fh.write("ok")
+        os.remove(probe)
+    except OSError as exc:
+        return jsonify({"ok": False, "message": f"下载目录不可用：{exc}"}), 400
+
+    try:
+        os.makedirs(os.path.join(out_dir, "证书"), exist_ok=True)
+    except OSError:
+        pass
+
+    base_url = str(payload.get("base_url") or core.DEFAULT_BASE_URL).strip().rstrip("/")
+    if not re.match(r"^https?://[^\s/]+", base_url):
+        return jsonify(
+            {"ok": False, "message": "站点地址格式不正确（需以 http:// 或 https:// 开头）"}
+        ), 400
+
+    layout = str(payload.get("layout") or LAYOUT_ACTIVITY).strip().lower()
+    if layout not in LAYOUTS:
+        layout = LAYOUT_ACTIVITY
+
+    raw_types = payload.get("types")
+    if isinstance(raw_types, str):
+        raw_types = [item.strip() for item in raw_types.split(",") if item.strip()]
+    if not isinstance(raw_types, list):
+        raw_types = ["prize"]
+    types = []
+    for item in raw_types:
+        key = str(item).strip().lower()
+        if key in CERTIFICATE_TYPES and key not in types:
+            types.append(key)
+    if not types:
+        return jsonify({"ok": False, "message": "请至少选择一种证书类型"}), 400
+
+    try:
+        login_timeout = max(10, min(300, int(payload.get("login_timeout") or 60)))
+    except (TypeError, ValueError):
+        login_timeout = 60
+    try:
+        delay = max(0.0, min(10.0, float(payload.get("delay", 1))))
+    except (TypeError, ValueError):
+        delay = 1.0
+
+    config = {
+        "base_url": base_url,
+        "out_dir": out_dir,
+        "layout": layout,
+        "types": types,
+        "headed": bool(payload.get("headed")),
+        "login_timeout": login_timeout,
+        "delay": delay,
+    }
+
+    reset_cert_job(len(accounts), out_dir, layout)
+    thread = threading.Thread(target=run_cert_job, args=(config, accounts), daemon=True)
+    thread.start()
+    return jsonify({"ok": True, "message": "证书下载已开始", "total": len(accounts)})
+
+
+@app.get("/api/certificates")
+def api_certificates():
+    with CERT_LOCK:
+        return jsonify({"ok": True, "job": deepcopy(CERT_JOB)})
 
 
 # ---------------------------------------------------------------- 目录操作
